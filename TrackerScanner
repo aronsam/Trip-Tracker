@@ -1,1 +1,107 @@
 
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#1f5fd1">
+<title>Trip Scanner</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js"></script>
+<style>
+body{margin:0;font:16px system-ui,sans-serif;background:#12161f;color:#fff;min-height:100vh}
+.w{padding:16px;max-width:480px;margin:auto}h2{margin:6px 0 14px}
+button,input{font:inherit;border-radius:12px;border:0;padding:14px;width:100%;margin-bottom:10px}
+input{background:#1b212d;color:#fff;border:1px solid #2d3546}
+.b{background:#1f5fd1;color:#fff;font-size:19px;padding:20px;text-align:left}.g{background:#2d3546;color:#fff}
+video{width:100%;border-radius:12px;background:#000}#res{padding:16px;border-radius:12px;margin-bottom:12px}
+.ok{background:#14864a}.er{background:#c9302c}.hide{display:none}small{color:#97a0b4}
+</style>
+</head>
+<body><div class="w">
+<h2>🚚 Trip Scanner</h2>
+
+<div id="lg">
+  <input id="u" placeholder="Username" autocapitalize="off"><input id="p" type="password" placeholder="Password">
+  <button class="b" onclick="login()">Login</button>
+</div>
+
+<div id="menu" class="hide">
+  <small id="who"></small><br><br>
+  <div id="res" class="hide"></div>
+  <div id="btns"></div>
+  <button class="g" onclick="logout()">Logout</button>
+</div>
+
+<div id="cam" class="hide">
+  <h3 id="ct"></h3>
+  <video id="v" playsinline muted></video>
+  <p><small>Itutok ang camera sa QR ng Trip Ticket</small></p>
+  <input id="man" placeholder="O i-type ang Trip # / DR #">
+  <button class="b" onclick="handle($('man').value)">OK</button>
+  <button class="g" onclick="stopCam()">Cancel</button>
+</div>
+</div>
+
+<script>
+// ⚠️ I-paste dito ang Web App URL ng Apps Script (yung nagtatapos sa /exec)
+const API = 'https://script.google.com/macros/s/AKfycbxIUjtl8LeBVpTFKJxPXCdOaTlU3do3bHI3LqR-KIK_hxAw6iBYkwvnQ3uPzusHfWGvOw/exec';
+
+const $ = id => document.getElementById(id);
+const B = [['dispatch', '🚚 Dispatch'], ['arrival', '📍 Arrival'], ['unloadStart', '📦 Simula Unload'], ['unloadEnd', '✅ Tapos Unload'], ['returnTime', '🔙 Return']];
+let tok = localStorage.tok || '', mode = '', stream = null, busy = false;
+
+const api = async b => { try { return await (await fetch(API, {method: 'POST', body: JSON.stringify(b)})).json(); } catch (e) { return {ok: 0, err: 'Walang connection'}; } };
+
+function show(v) { ['lg', 'menu', 'cam'].forEach(x => $(x).classList.toggle('hide', x !== v)); }
+function msg(t, ok) { const r = $('res'); r.className = ok ? 'ok' : 'er'; r.innerHTML = t; }
+
+async function login() {
+  const r = await api({a: 'login', u: $('u').value, p: $('p').value});
+  if (!r.ok) return alert(r.err);
+  tok = r.tok; localStorage.tok = tok; localStorage.who = r.name + ' (' + r.role + ')'; menu();
+}
+function logout() { localStorage.clear(); tok = ''; show('lg'); }
+function menu() {
+  $('who').textContent = localStorage.who || ''; $('res').className = 'hide';
+  $('btns').innerHTML = B.map(([k, l]) => `<button class="b" onclick="start('${k}','${l}')">${l}</button>`).join('');
+  show('menu');
+}
+
+async function start(k, l) {
+  mode = k; busy = false; $('ct').textContent = l; $('man').value = ''; show('cam');
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({video: {facingMode: 'environment'}});
+    $('v').srcObject = stream; await $('v').play(); tick();
+  } catch (e) { alert('Hindi ma-open ang camera. I-allow ang Camera permission, o i-type na lang ang Trip #.'); }
+}
+function stopCam() { if (stream) stream.getTracks().forEach(t => t.stop()); stream = null; menu(); }
+
+// Basahin ang QR mula sa video, paulit-ulit hanggang may makita
+function tick() {
+  const v = $('v');
+  if (!stream) return;
+  if (!busy && v.videoWidth) {
+    const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight;
+    const x = c.getContext('2d'); x.drawImage(v, 0, 0);
+    const q = jsQR(x.getImageData(0, 0, c.width, c.height).data, c.width, c.height);
+    if (q && q.data) { navigator.vibrate && navigator.vibrate(150); return handle(q.data); }
+  }
+  requestAnimationFrame(tick);
+}
+
+async function handle(id, force) {
+  id = (id || '').trim(); if (!id || busy) return; busy = true;
+  const r = await api({a: 'scan', tok, id, f: mode, force: !!force});
+  if (r.err && /SESSION/.test(r.err)) { stopCam(); logout(); return alert('Na-expire ang login. Mag-login ulit.'); }
+  if (r.exists) {
+    if (confirm(r.id + ' ay may oras na (' + String(r.old).replace('T', ' ') + '). Palitan?')) { busy = false; return handle(id, true); }
+    stopCam(); return msg('Walang binago: ' + r.id, false);
+  }
+  stopCam();
+  msg(r.ok ? `✔ <b>${r.id}</b><br>${$('ct').textContent}: ${r.time.replace('T', ' ')}<br>Status: ${r.status}${r.plate ? '<br>' + r.plate : ''}` : '✖ ' + r.err, r.ok);
+}
+
+if (tok) menu(); else show('lg');
+</script>
+</body>
+</html>
